@@ -139,8 +139,54 @@ def to_num(v):
         return None
 
 
+def release_assets():
+    """Fișiere atașate de utilizator unui release GitHub (data.gov.ro blochează
+    rețelele cloud, deci fișierele se descarcă manual din browser și se atașează
+    unui release — importul le preia automat de acolo)."""
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not repo or not token:
+        return []
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/releases?per_page=5",
+            headers={"Authorization": "Bearer " + token, "User-Agent": "import-registru"},
+        )
+        with urllib.request.urlopen(req, timeout=60) as r:
+            releases = json.load(r)
+    except Exception as e:
+        print(f"AVERTISMENT: nu pot citi release-urile: {e}")
+        return []
+    assets = []
+    for rel in releases:
+        for a in rel.get("assets", []):
+            assets.append(a)
+        if assets:
+            print(f"Release folosit: {rel.get('tag_name')} ({len(assets)} fișiere)")
+            break
+    return assets
+
+
+def spec_columns(path):
+    """Citește numele coloanelor dintr-un fișier de specificație .csv al MF."""
+    with open_text(path) as f:
+        first = f.readline().rstrip("\r\n")
+        delim = sniff_delimiter(first)
+        rows = list(csv.reader([first] + f.read().splitlines(), delimiter=delim))
+    if not rows:
+        return []
+    if len(rows) == 1 or len(rows[0]) > 3:
+        return [norm(c) for c in rows[0]]
+    return [norm(r[0]) for r in rows if r and r[0].strip()]
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
+
+    # ---------- 0. Mod release: fișiere atașate manual ----------
+    assets = release_assets()
+    if assets:
+        return main_from_assets(assets)
 
     # ---------- 1. Situații financiare (indicatori per CUI) ----------
     fin_pkg = find_package("situatii financiare", "mfp", r"situa\S*\s*financiare")
@@ -262,7 +308,123 @@ def main():
     except Exception as e:
         print(f"AVERTISMENT: nu am putut procesa datele de identificare: {e}")
 
-    # ---------- 3. Generăm SQL pentru D1 ----------
+    write_sql(firms, an_bilant)
+
+
+def main_from_assets(assets):
+    """Importă din fișierele atașate unui release GitHub."""
+    paths = {}
+    for a in assets:
+        name = a["name"]
+        if not re.search(r"\.(txt|csv)$", name, re.I):
+            print(f"  sar peste {name} (nu e txt/csv)")
+            continue
+        dest = os.path.join(OUT, name)
+        download(a["browser_download_url"], dest)
+        paths[name] = dest
+
+    specs = {re.sub(r"\.csv$", "", n, flags=re.I): p for n, p in paths.items() if n.lower().endswith(".csv")}
+
+    def columns_for(name, path):
+        delim, cols = read_header(path)
+        if col_index(cols, r"CUI|COD_?UNIC|^CIF$") is not None:
+            return delim, cols, True  # are antet propriu
+        stem = re.sub(r"\.(txt|csv)$", "", name, flags=re.I)
+        if stem in specs:
+            cols = spec_columns(specs[stem])
+            print(f"  {name}: antet din specificația {stem}.csv -> {cols[:15]}")
+            return delim, cols, False
+        return delim, cols, True
+
+    firms = {}
+    an = ""
+    for n in paths:
+        m = re.search(r"(20\d\d)", n)
+        if m:
+            an = m.group(1)
+
+    # Pasul 1: fișierele financiare (au CUI + CAEN)
+    for name, path in paths.items():
+        delim, cols, has_header = columns_for(name, path)
+        i_cui = col_index(cols, r"^CUI$", r"^COD_?UNIC", r"^CIF$", r"CUI")
+        i_caen = col_index(cols, r"^CAEN$", r"^COD_?CAEN", r"CAEN")
+        if i_cui is None or i_caen is None:
+            continue
+        i_ca = col_index(cols, r"CIFRA_?DE_?AFACERI", r"^CA_?NETA", r"CIFRA")
+        i_profit = col_index(cols, r"PROFIT_?NET", r"^PROFIT$", r"REZULTAT_?NET", r"PROFIT")
+        i_ang = col_index(cols, r"NUMAR_?MEDIU_?(DE_?)?SALARIATI", r"SALARIATI", r"ANGAJATI")
+        i_den = col_index(cols, r"^DENUMIRE", r"^DEN$")
+        print(f"{name}: financiar, cui={i_cui} caen={i_caen} ca={i_ca} profit={i_profit} ang={i_ang} den={i_den}")
+        count = 0
+        with open_text(path) as f:
+            reader = csv.reader(f, delimiter=delim)
+            if has_header:
+                next(reader, None)
+            for row in reader:
+                if len(row) <= max(i_cui, i_caen):
+                    continue
+                caen = re.sub(r"\D", "", row[i_caen])
+                if not caen.startswith(("41", "42", "43")):
+                    continue
+                cui = re.sub(r"\D", "", row[i_cui])
+                if not cui:
+                    continue
+                firms[cui] = {
+                    "caen": caen,
+                    "ca": to_num(row[i_ca]) if i_ca is not None and len(row) > i_ca else None,
+                    "profit": to_num(row[i_profit]) if i_profit is not None and len(row) > i_profit else None,
+                    "ang": to_num(row[i_ang]) if i_ang is not None and len(row) > i_ang else None,
+                    "den": row[i_den].strip() if i_den is not None and len(row) > i_den else "",
+                    "judet": "",
+                    "loc": "",
+                    "adresa": "",
+                }
+                count += 1
+        print(f"  -> {count} firme construcții (total {len(firms)})")
+
+    if not firms:
+        print("EROARE: niciun fișier financiar valid în release (lipsesc CUI/CAEN)")
+        sys.exit(1)
+
+    # Pasul 2: fișierele de identificare (CUI + denumire/adresă, fără CAEN)
+    for name, path in paths.items():
+        delim, cols, has_header = columns_for(name, path)
+        i_cui = col_index(cols, r"^CUI$", r"^COD_?FISCAL", r"^CIF$", r"CUI")
+        i_caen = col_index(cols, r"^CAEN$", r"^COD_?CAEN", r"CAEN")
+        i_den = col_index(cols, r"^DENUMIRE", r"^DEN$", r"NUME")
+        if i_cui is None or i_caen is not None or i_den is None:
+            continue
+        i_jud = col_index(cols, r"JUDET")
+        i_loc = col_index(cols, r"LOCALITATE", r"ORAS")
+        i_adr = col_index(cols, r"ADRESA", r"STRADA")
+        print(f"{name}: identificare, cui={i_cui} den={i_den} judet={i_jud} loc={i_loc} adr={i_adr}")
+        matched = 0
+        with open_text(path) as f:
+            reader = csv.reader(f, delimiter=delim)
+            if has_header:
+                next(reader, None)
+            for row in reader:
+                if len(row) <= i_cui:
+                    continue
+                firm = firms.get(re.sub(r"\D", "", row[i_cui]))
+                if not firm:
+                    continue
+                if len(row) > i_den and row[i_den].strip():
+                    firm["den"] = row[i_den].strip()
+                if i_jud is not None and len(row) > i_jud:
+                    firm["judet"] = row[i_jud].strip()
+                if i_loc is not None and len(row) > i_loc:
+                    firm["loc"] = row[i_loc].strip()
+                if i_adr is not None and len(row) > i_adr:
+                    firm["adresa"] = row[i_adr].strip()[:200]
+                matched += 1
+        print(f"  -> potriviri: {matched}")
+
+    write_sql(firms, an)
+
+
+def write_sql(firms, an_bilant):
+    # ---------- Generăm SQL pentru D1 ----------
     def esc(s):
         return (s or "").replace("'", "''")
 

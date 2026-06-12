@@ -1,11 +1,11 @@
 name: Import registru firme construcții
 
 on:
+  release:
+    types: [published] # importă automat fișierele atașate unui release
   push:
     branches: [main, claude/dreamy-edison-u0c7y1]
     paths:
-      - "scripts/import_registru.py"
-      - ".github/workflows/import-registru.yml"
       - "IMPORT_TRIGGER"
   schedule:
     - cron: "0 4 5 * *" # lunar, pe 5, la 04:00 UTC
@@ -32,8 +32,10 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           IMPORT_PROXY_URL: https://cautator-firme-constructii.catalincherciu90.workers.dev/api/import-proxy
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          sleep 75 # lăsăm deploy-ul paralel să seteze cheia tunelului în Worker
           export IMPORT_PROXY_KEY=$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | cut -d' ' -f1)
           python3 scripts/import_registru.py
 
