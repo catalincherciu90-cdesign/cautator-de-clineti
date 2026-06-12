@@ -184,18 +184,23 @@ Răspunde DOAR cu un array JSON valid, fără alt text, în formatul:
     max_tokens: 1500,
   });
 
-  const text = (result && result.response) || '';
-  const start = text.indexOf('[');
-  const end = text.lastIndexOf(']');
-  if (start === -1 || end <= start) {
-    throw new Error('AI răspuns fără JSON: ' + JSON.stringify(result).slice(0, 200));
-  }
-
+  // Modelul poate răspunde fie cu text JSON, fie direct cu structura parsată
+  const raw = result && result.response;
   let parsed;
-  try {
-    parsed = JSON.parse(text.slice(start, end + 1));
-  } catch {
-    throw new Error('AI JSON invalid: ' + text.slice(start, start + 200));
+  if (Array.isArray(raw)) {
+    parsed = raw;
+  } else {
+    const text = typeof raw === 'string' ? raw : '';
+    const start = text.indexOf('[');
+    const end = text.lastIndexOf(']');
+    if (start === -1 || end <= start) {
+      throw new Error('AI răspuns fără JSON: ' + JSON.stringify(result).slice(0, 200));
+    }
+    try {
+      parsed = JSON.parse(text.slice(start, end + 1));
+    } catch {
+      throw new Error('AI JSON invalid: ' + text.slice(start, start + 200));
+    }
   }
   if (!Array.isArray(parsed)) return [];
 
