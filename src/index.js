@@ -120,6 +120,10 @@ async function handleSearch(url, env) {
   const google = googleRes.status === 'fulfilled' ? googleRes.value : [];
   const osm = osmRes.status === 'fulfilled' && osmRes.value ? osmRes.value : null;
   const ai = aiRes.status === 'fulfilled' ? aiRes.value : [];
+  const aiError =
+    aiRes.status === 'rejected'
+      ? String((aiRes.reason && aiRes.reason.message) || aiRes.reason).slice(0, 300)
+      : null;
 
   if (!google.length && !osm && !ai.length) {
     return json({ error: 'Serviciile de căutare nu au răspuns. Reîncearcă în câteva secunde.' }, 502);
@@ -144,7 +148,12 @@ async function handleSearch(url, env) {
 
   return json({
     oras: (osm && osm.display_name) || city,
-    surse: { google: google.length, openstreetmap: osm ? osm.results.length : 0, ai: ai.length },
+    surse: {
+      google: google.length,
+      openstreetmap: osm ? osm.results.length : 0,
+      ai: ai.length,
+      ...(aiError ? { ai_eroare: aiError } : {}),
+    },
     total: results.length,
     rezultate: results,
   });
@@ -178,13 +187,15 @@ Răspunde DOAR cu un array JSON valid, fără alt text, în formatul:
   const text = (result && result.response) || '';
   const start = text.indexOf('[');
   const end = text.lastIndexOf(']');
-  if (start === -1 || end <= start) return [];
+  if (start === -1 || end <= start) {
+    throw new Error('AI răspuns fără JSON: ' + JSON.stringify(result).slice(0, 200));
+  }
 
   let parsed;
   try {
     parsed = JSON.parse(text.slice(start, end + 1));
   } catch {
-    return [];
+    throw new Error('AI JSON invalid: ' + text.slice(start, start + 200));
   }
   if (!Array.isArray(parsed)) return [];
 
