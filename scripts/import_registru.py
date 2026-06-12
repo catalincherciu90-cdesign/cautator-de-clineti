@@ -21,21 +21,40 @@ import urllib.request
 
 CKAN = "https://data.gov.ro/api/3/action"
 OUT = "out"
-UA = {"User-Agent": "CautatorFirmeConstructii/1.0 (import date deschise)"}
+UA = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Accept": "*/*",
+    "Accept-Language": "ro-RO,ro;q=0.9,en;q=0.8",
+}
+RETRIES = 4
 
 csv.field_size_limit(10_000_000)
 
 
+def fetch(url, timeout):
+    last = None
+    for attempt in range(1, RETRIES + 1):
+        try:
+            req = urllib.request.Request(url, headers=UA)
+            return urllib.request.urlopen(req, timeout=timeout)
+        except Exception as e:
+            last = e
+            wait = 20 * attempt
+            print(f"  încercarea {attempt}/{RETRIES} a eșuat ({e}); reîncerc în {wait}s")
+            import time
+            time.sleep(wait)
+    raise last
+
+
 def get_json(url):
-    req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=120) as r:
+    with fetch(url, 120) as r:
         return json.load(r)
 
 
 def download(url, dest):
     print(f"  descarc {url}")
-    req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=600) as r, open(dest, "wb") as f:
+    with fetch(url, 900) as r, open(dest, "wb") as f:
         while True:
             chunk = r.read(1 << 20)
             if not chunk:
