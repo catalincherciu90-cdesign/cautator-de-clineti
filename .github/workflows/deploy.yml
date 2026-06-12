@@ -42,3 +42,16 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: npx wrangler deploy
+
+      - name: Test căutare în producție
+        continue-on-error: true
+        run: |
+          sleep 10
+          echo "=== Test API firme salvate ==="
+          curl -s "https://cautator-firme-constructii.catalincherciu90.workers.dev/api/firms" | head -c 300
+          echo
+          echo "=== Test căutare Cluj-Napoca ==="
+          curl -s "https://cautator-firme-constructii.catalincherciu90.workers.dev/api/search?city=Cluj-Napoca" | head -c 1500
+          echo
+          echo "=== Test căutare București ==="
+          curl -s "https://cautator-firme-constructii.catalincherciu90.workers.dev/api/search?city=Bucuresti" | head -c 800

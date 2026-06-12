@@ -10,6 +10,15 @@ const USER_AGENT = 'CautatorFirmeConstructii/1.0 (Cloudflare Worker)';
 const CRAFT_REGEX =
   'builder|roofer|plumber|electrician|carpenter|painter|plasterer|tiler|hvac|scaffolder|floorer|insulation|mason|window_construction';
 
+// Cuvinte din numele firmelor românești de construcții (căutare după nume)
+const NAME_REGEX =
+  'construct|amenaj|instal|renov|zugrav|acoper|izola|finisaj|santier|şantier|beton|tamplarie|tâmplărie';
+
+const OVERPASS_SERVERS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+];
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -55,36 +64,31 @@ async function handleSearch(url) {
   const query = (url.searchParams.get('q') || '').trim().toLowerCase();
   if (!city) return json({ error: 'Parametrul "city" este obligatoriu' }, 400);
 
-  // 1. Geocodăm orașul cu Nominatim ca să obținem bounding box-ul
-  const geoRes = await fetch(
-    'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' +
-      encodeURIComponent(city + ', România'),
-    { headers: { 'User-Agent': USER_AGENT } }
-  );
-  if (!geoRes.ok) return json({ error: 'Geocodarea orașului a eșuat' }, 502);
-  const geo = await geoRes.json();
-  if (!geo.length) return json({ error: `Orașul „${city}" nu a fost găsit` }, 404);
+  // 1. Geocodăm orașul (Nominatim, cu Photon ca rezervă)
+  const geo = await geocodeCity(city);
+  if (!geo) return json({ error: `Orașul „${city}" nu a fost găsit. Verifică denumirea.` }, 404);
 
-  const [south, north, west, east] = geo[0].boundingbox.map(Number);
-  const bbox = `${south},${west},${north},${east}`;
+  const bbox = `${geo.south},${geo.west},${geo.north},${geo.east}`;
 
-  // 2. Căutăm firme de construcții în zona respectivă cu Overpass
+  // 2. Căutăm firme de construcții în zonă: după categorie ȘI după nume
   const overpassQuery = `
-[out:json][timeout:25];
+[out:json][timeout:30];
 (
   nwr["office"="construction_company"](${bbox});
   nwr["craft"~"${CRAFT_REGEX}"](${bbox});
   nwr["shop"="trade"]["trade"~"building|construction"](${bbox});
+  nwr["name"~"${NAME_REGEX}",i]["office"](${bbox});
+  nwr["name"~"${NAME_REGEX}",i]["shop"](${bbox});
+  nwr["name"~"${NAME_REGEX}",i]["craft"](${bbox});
+  nwr["name"~"${NAME_REGEX}",i]["building"~"commercial|industrial|office|warehouse"](${bbox});
+  nwr["name"~"${NAME_REGEX}",i]["landuse"="industrial"](${bbox});
 );
-out center tags 200;`;
+out center tags 300;`;
 
-  const opRes = await fetch('https://overpass-api.de/api/interpreter', {
-    method: 'POST',
-    headers: { 'User-Agent': USER_AGENT, 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'data=' + encodeURIComponent(overpassQuery),
-  });
-  if (!opRes.ok) return json({ error: 'Căutarea Overpass a eșuat, reîncearcă' }, 502);
-  const data = await opRes.json();
+  const data = await runOverpass(overpassQuery);
+  if (!data) {
+    return json({ error: 'Serviciul de căutare e momentan aglomerat. Reîncearcă în câteva secunde.' }, 502);
+  }
 
   let results = (data.elements || [])
     .filter((el) => el.tags && el.tags.name)
@@ -96,12 +100,12 @@ out center tags 200;`;
       return {
         osm_id: `${el.type}/${el.id}`,
         nume: t.name,
-        tip: t.office === 'construction_company' ? 'firmă construcții' : t.craft || t.shop || '',
+        tip: t.office === 'construction_company' ? 'firmă construcții' : t.craft || t.shop || t.office || 'construcții',
         adresa: adresa || null,
         telefon: t.phone || t['contact:phone'] || null,
         email: t.email || t['contact:email'] || null,
         website: t.website || t['contact:website'] || null,
-        oras: t['addr:city'] || geo[0].name || city,
+        oras: t['addr:city'] || geo.name || city,
       };
     });
 
@@ -120,7 +124,62 @@ out center tags 200;`;
     return true;
   });
 
-  return json({ oras: geo[0].display_name, total: results.length, rezultate: results });
+  return json({ oras: geo.display_name, total: results.length, rezultate: results });
+}
+
+/** Geocodare cu două servicii: Nominatim, apoi Photon ca rezervă. */
+async function geocodeCity(city) {
+  try {
+    const res = await fetch(
+      'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' +
+        encodeURIComponent(city + ', România'),
+      { headers: { 'User-Agent': USER_AGENT } }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      if (data.length) {
+        const [south, north, west, east] = data[0].boundingbox.map(Number);
+        return { south, north, west, east, name: data[0].name, display_name: data[0].display_name };
+      }
+    }
+  } catch { /* trecem la rezervă */ }
+
+  try {
+    const res = await fetch(
+      'https://photon.komoot.io/api/?limit=1&q=' + encodeURIComponent(city + ', România'),
+      { headers: { 'User-Agent': USER_AGENT } }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      const feat = data.features && data.features[0];
+      if (feat) {
+        const name = feat.properties.name || city;
+        if (feat.properties.extent) {
+          const [west, north, east, south] = feat.properties.extent;
+          return { south, north, west, east, name, display_name: name };
+        }
+        const [lon, lat] = feat.geometry.coordinates;
+        return { south: lat - 0.15, north: lat + 0.15, west: lon - 0.2, east: lon + 0.2, name, display_name: name };
+      }
+    }
+  } catch { /* nimic */ }
+
+  return null;
+}
+
+/** Rulează interogarea Overpass încercând pe rând serverele disponibile. */
+async function runOverpass(query) {
+  for (const server of OVERPASS_SERVERS) {
+    try {
+      const res = await fetch(server, {
+        method: 'POST',
+        headers: { 'User-Agent': USER_AGENT, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'data=' + encodeURIComponent(query),
+      });
+      if (res.ok) return await res.json();
+    } catch { /* încercăm următorul server */ }
+  }
+  return null;
 }
 
 /* ---------- CRUD firme salvate (D1) ---------- */
