@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cautator-firme-constructii",
+  "main": "src/index.js",
+  "compatibility_date": "2026-06-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "firme-constructii-db",
+      "database_id": "PLACEHOLDER_DB_ID"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

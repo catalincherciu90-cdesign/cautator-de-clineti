@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Căutător Firme de Construcții</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>🏗️ Căutător Firme de Construcții</h1>
+    <p>Caută firme de construcții din orice oraș și salvează-le în baza ta de date</p>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="cautare">🔍 Căutare</button>
+    <button class="tab" data-tab="salvate">💾 Firme salvate <span id="count-badge" class="badge">0</span></button>
+    <button class="tab" data-tab="adauga">➕ Adaugă manual</button>
+  </nav>
+
+  <main>
+    <!-- Tab Căutare -->
+    <section id="tab-cautare" class="tab-content active">
+      <form id="search-form" class="search-form">
+        <input type="text" id="search-city" placeholder="Oraș (ex: București, Cluj-Napoca, Iași)" required>
+        <input type="text" id="search-query" placeholder="Filtru opțional (ex: instalator, acoperiș)">
+        <button type="submit" id="search-btn">Caută</button>
+      </form>
+      <div id="search-status" class="status"></div>
+      <div id="search-results" class="cards"></div>
+    </section>
+
+    <!-- Tab Firme salvate -->
+    <section id="tab-salvate" class="tab-content">
+      <div class="filter-bar">
+        <label>Filtrează după status:</label>
+        <select id="filter-status">
+          <option value="">Toate</option>
+          <option value="nou">Nou</option>
+          <option value="contactat">Contactat</option>
+          <option value="oferta_trimisa">Ofertă trimisă</option>
+          <option value="client">Client</option>
+          <option value="respins">Respins</option>
+        </select>
+      </div>
+      <div id="saved-status" class="status"></div>
+      <div id="saved-list" class="cards"></div>
+    </section>
+
+    <!-- Tab Adaugă manual -->
+    <section id="tab-adauga" class="tab-content">
+      <form id="add-form" class="add-form">
+        <input type="text" id="add-nume" placeholder="Numele firmei *" required>
+        <input type="text" id="add-oras" placeholder="Oraș">
+        <input type="text" id="add-adresa" placeholder="Adresă">
+        <input type="tel" id="add-telefon" placeholder="Telefon">
+        <input type="email" id="add-email" placeholder="Email">
+        <input type="url" id="add-website" placeholder="Website (https://...)">
+        <textarea id="add-notite" placeholder="Notițe" rows="3"></textarea>
+        <button type="submit">Salvează firma</button>
+      </form>
+      <div id="add-status" class="status"></div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Date de căutare: <a href="https://www.openstreetmap.org" target="_blank" rel="noopener">OpenStreetMap</a> · Găzduit pe Cloudflare Workers + D1</p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

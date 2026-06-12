@@ -1,0 +1,15 @@
+{
+  "name": "cautator-firme-constructii",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Platformă de căutare și salvare firme de construcții — Cloudflare Workers + D1",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:init": "wrangler d1 execute firme-constructii-db --remote --file=./schema.sql",
+    "db:init:local": "wrangler d1 execute firme-constructii-db --local --file=./schema.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
