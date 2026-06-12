@@ -29,6 +29,10 @@ UA = {
 }
 RETRIES = 4
 
+# data.gov.ro blochează rețelele cloud — descărcăm prin tunelul din Worker
+PROXY_URL = os.environ.get("IMPORT_PROXY_URL", "")
+PROXY_KEY = os.environ.get("IMPORT_PROXY_KEY", "")
+
 csv.field_size_limit(10_000_000)
 
 
@@ -36,11 +40,19 @@ def fetch(url, timeout):
     last = None
     for attempt in range(1, RETRIES + 1):
         try:
-            req = urllib.request.Request(url, headers=UA)
-            return urllib.request.urlopen(req, timeout=timeout)
+            real_url = url
+            headers = dict(UA)
+            if PROXY_URL and "data.gov.ro" in url:
+                real_url = PROXY_URL + "?url=" + urllib.parse.quote(url, safe="")
+                headers["X-Import-Key"] = PROXY_KEY
+            req = urllib.request.Request(real_url, headers=headers)
+            resp = urllib.request.urlopen(req, timeout=timeout)
+            if resp.status >= 400:
+                raise RuntimeError(f"HTTP {resp.status}")
+            return resp
         except Exception as e:
             last = e
-            wait = 20 * attempt
+            wait = 15 * attempt
             print(f"  încercarea {attempt}/{RETRIES} a eșuat ({e}); reîncerc în {wait}s")
             import time
             time.sleep(wait)

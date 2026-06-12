@@ -82,6 +82,9 @@ export default {
       if (anafMatch && request.method === 'POST') {
         return await verifyAnaf(env, Number(anafMatch[1]));
       }
+      if (pathname === '/api/import-proxy' && request.method === 'GET') {
+        return await importProxy(env, request, url);
+      }
       if (pathname === '/api/firms' && request.method === 'GET') {
         return await listFirms(env, url);
       }
@@ -454,6 +457,42 @@ async function listJudete(env) {
   } catch {
     return json({ judete: [] });
   }
+}
+
+/* ---------- Tunel pentru importul datelor oficiale ----------
+ * data.gov.ro blochează rețelele cloud străine (inclusiv GitHub Actions).
+ * Worker-ul descarcă fișierele și le transmite workflow-ului de import.
+ * Protejat cu o cheie secretă și limitat strict la domeniile guvernamentale. */
+
+async function importProxy(env, request, url) {
+  const key = request.headers.get('x-import-key');
+  if (!env.IMPORT_PROXY_KEY || key !== env.IMPORT_PROXY_KEY) {
+    return json({ error: 'Neautorizat' }, 401);
+  }
+  const target = url.searchParams.get('url') || '';
+  let t;
+  try {
+    t = new URL(target);
+  } catch {
+    return json({ error: 'URL invalid' }, 400);
+  }
+  if (!/(^|\.)data\.gov\.ro$|(^|\.)mfinante\.gov\.ro$/.test(t.hostname)) {
+    return json({ error: 'Domeniu nepermis' }, 400);
+  }
+  const upstream = await fetch(target, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      'Accept': '*/*',
+      'Accept-Language': 'ro-RO,ro;q=0.9',
+    },
+  });
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: {
+      'Content-Type': upstream.headers.get('Content-Type') || 'application/octet-stream',
+    },
+  });
 }
 
 /* ---------- Verificare ANAF (după CUI) ---------- */

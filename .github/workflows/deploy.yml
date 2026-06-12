@@ -55,6 +55,13 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: npx wrangler deploy
 
+      - name: Setează cheia tunelului de import
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          KEY=$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | cut -d' ' -f1)
+          printf '%s' "$KEY" | npx wrangler secret put IMPORT_PROXY_KEY
+
       - name: Setează cheia Google Places în Cloudflare (dacă există)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
