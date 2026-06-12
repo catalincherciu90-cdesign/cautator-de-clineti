@@ -1,0 +1,73 @@
+name: Import registru firme construcții
+
+on:
+  push:
+    branches: [main, claude/dreamy-edison-u0c7y1]
+    paths:
+      - "scripts/import_registru.py"
+      - ".github/workflows/import-registru.yml"
+      - "IMPORT_TRIGGER"
+  schedule:
+    - cron: "0 4 5 * *" # lunar, pe 5, la 04:00 UTC
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalează dependențele
+        run: npm ci
+
+      - name: Descarcă și procesează datele (MF / data.gov.ro)
+        run: python3 scripts/import_registru.py
+
+      - name: Recreează tabela firme_registru în D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          npx wrangler d1 execute firme-constructii-db --remote --yes --command "
+            DROP TABLE IF EXISTS firme_registru;
+            CREATE TABLE firme_registru (
+              cui INTEGER PRIMARY KEY,
+              denumire TEXT NOT NULL,
+              judet TEXT,
+              localitate TEXT,
+              adresa TEXT,
+              caen TEXT,
+              cifra_afaceri REAL,
+              profit REAL,
+              angajati INTEGER,
+              an INTEGER
+            );"
+
+      - name: Încarcă datele în D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -e
+          for f in out/chunk_*.sql; do
+            echo "== $f =="
+            npx wrangler d1 execute firme-constructii-db --remote --yes --file "$f"
+          done
+
+      - name: Creează indexuri și verifică
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          npx wrangler d1 execute firme-constructii-db --remote --yes --command "
+            CREATE INDEX IF NOT EXISTS idx_reg_judet ON firme_registru(judet);
+            CREATE INDEX IF NOT EXISTS idx_reg_loc ON firme_registru(localitate);
+            CREATE INDEX IF NOT EXISTS idx_reg_caen ON firme_registru(caen);
+            CREATE INDEX IF NOT EXISTS idx_reg_ca ON firme_registru(cifra_afaceri);"
+          npx wrangler d1 execute firme-constructii-db --remote --yes --command \
+            "SELECT COUNT(*) AS total_firme FROM firme_registru;"

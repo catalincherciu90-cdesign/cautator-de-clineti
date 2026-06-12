@@ -72,6 +72,16 @@ export default {
       if (pathname === '/api/industries' && request.method === 'GET') {
         return json({ industrii: INDUSTRII });
       }
+      if (pathname === '/api/registru' && request.method === 'GET') {
+        return await searchRegistru(env, url);
+      }
+      if (pathname === '/api/registru/judete' && request.method === 'GET') {
+        return await listJudete(env);
+      }
+      const anafMatch = pathname.match(/^\/api\/firms\/(\d+)\/anaf$/);
+      if (anafMatch && request.method === 'POST') {
+        return await verifyAnaf(env, Number(anafMatch[1]));
+      }
       if (pathname === '/api/firms' && request.method === 'GET') {
         return await listFirms(env, url);
       }
@@ -371,6 +381,133 @@ async function runOverpass(query) {
   return null;
 }
 
+/* ---------- Registrul firmelor (date oficiale MF/ONRC, importate în D1) ---------- */
+
+// Etichete pentru codurile CAEN din construcții
+const CAEN_LABELS = {
+  '41': 'Construcția clădirilor',
+  '42': 'Infrastructură & geniu civil',
+  '431': 'Demolări & terasamente',
+  '4321': 'Instalații electrice',
+  '4322': 'Instalații sanitare & termice',
+  '4329': 'Alte instalații',
+  '4331': 'Ipsoserie & tencuieli',
+  '4332': 'Tâmplărie & dulgherie',
+  '4333': 'Pardoseli & placări',
+  '4334': 'Zugrăveli & vopsitorii',
+  '4339': 'Alte finisaje',
+  '4391': 'Acoperișuri & șarpante',
+  '4399': 'Alte lucrări speciale',
+};
+
+function caenLabel(caen) {
+  for (const len of [4, 3, 2]) {
+    const l = CAEN_LABELS[(caen || '').slice(0, len)];
+    if (l) return l;
+  }
+  return 'Construcții';
+}
+
+async function searchRegistru(env, url) {
+  const p = url.searchParams;
+  const conditions = [];
+  const params = [];
+
+  if (p.get('judet')) { conditions.push('judet = ?'); params.push(p.get('judet')); }
+  if (p.get('localitate')) { conditions.push('localitate LIKE ?'); params.push('%' + p.get('localitate').trim() + '%'); }
+  if (p.get('caen')) { conditions.push('caen LIKE ?'); params.push(p.get('caen') + '%'); }
+  if (p.get('min_angajati')) { conditions.push('angajati >= ?'); params.push(Number(p.get('min_angajati')) || 0); }
+  if (p.get('min_ca')) { conditions.push('cifra_afaceri >= ?'); params.push(Number(p.get('min_ca')) || 0); }
+  if (p.get('q')) { conditions.push('denumire LIKE ?'); params.push('%' + p.get('q').trim() + '%'); }
+
+  const where = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
+  const page = Math.max(0, Number(p.get('page')) || 0);
+  const LIMIT = 30;
+
+  try {
+    const totalRow = await env.DB.prepare('SELECT COUNT(*) AS n FROM firme_registru' + where)
+      .bind(...params)
+      .first();
+    const { results } = await env.DB.prepare(
+      'SELECT * FROM firme_registru' + where +
+        ' ORDER BY (cifra_afaceri IS NULL), cifra_afaceri DESC LIMIT ? OFFSET ?'
+    )
+      .bind(...params, LIMIT, page * LIMIT)
+      .all();
+
+    for (const r of results) r.caen_den = caenLabel(r.caen);
+    return json({ total: totalRow.n, pagina: page, per_pagina: LIMIT, firme: results });
+  } catch (err) {
+    if (/no such table/i.test(err.message)) {
+      return json({ error: 'Registrul nu este încă importat. Rulează workflow-ul de import.', total: 0, firme: [] }, 200);
+    }
+    throw err;
+  }
+}
+
+async function listJudete(env) {
+  try {
+    const { results } = await env.DB.prepare(
+      "SELECT DISTINCT judet FROM firme_registru WHERE judet != '' ORDER BY judet"
+    ).all();
+    return json({ judete: results.map((r) => r.judet) });
+  } catch {
+    return json({ judete: [] });
+  }
+}
+
+/* ---------- Verificare ANAF (după CUI) ---------- */
+
+async function verifyAnaf(env, id) {
+  const firm = await env.DB.prepare('SELECT * FROM firme WHERE id = ?').bind(id).first();
+  if (!firm) return json({ error: 'Firma nu există' }, 404);
+  const cui = Number(String(firm.cui || '').replace(/\D/g, ''));
+  if (!cui) return json({ error: 'Firma nu are CUI. Adaugă CUI-ul ca să o pot verifica la ANAF.' }, 400);
+
+  const res = await fetch('https://webservicesp.anaf.ro/PlatitorTvaRest/api/v9/ws/tva', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'User-Agent': USER_AGENT },
+    body: JSON.stringify([{ cui, data: new Date().toISOString().slice(0, 10) }]),
+  });
+  if (!res.ok) return json({ error: 'ANAF nu a răspuns (cod ' + res.status + '). Reîncearcă.' }, 502);
+  const data = await res.json();
+  const found = data.found && data.found[0];
+  if (!found) return json({ error: 'CUI-ul ' + cui + ' nu a fost găsit la ANAF.' }, 404);
+
+  const dg = found.date_generale || {};
+  const tva = !!(found.inregistrare_scp_tva && found.inregistrare_scp_tva.scpTVA);
+  const inactiv = !!(found.stare_inactiv && found.stare_inactiv.statusInactivi);
+
+  // Îmbogățim firma cu datele oficiale (fără să suprascriem ce a completat utilizatorul)
+  const verificare =
+    `✓ ANAF (${new Date().toISOString().slice(0, 10)}): ` +
+    `${inactiv ? 'INACTIVĂ fiscal' : 'activă'}, ${tva ? 'plătitor TVA' : 'neplătitor TVA'}` +
+    (dg.nrRegCom ? `, ${dg.nrRegCom}` : '');
+  const notite = (firm.notite ? firm.notite + '\n' : '') + verificare;
+
+  await env.DB.prepare(
+    'UPDATE firme SET nume = ?, adresa = ?, telefon = ?, notite = ? WHERE id = ?'
+  )
+    .bind(
+      dg.denumire || firm.nume,
+      firm.adresa || dg.adresa || null,
+      firm.telefon || dg.telefon || null,
+      notite,
+      id
+    )
+    .run();
+
+  return json({
+    ok: true,
+    denumire: dg.denumire || null,
+    adresa: dg.adresa || null,
+    telefon: dg.telefon || null,
+    platitor_tva: tva,
+    inactiva: inactiv,
+    nr_reg_com: dg.nrRegCom || null,
+  });
+}
+
 /* ---------- CRUD firme salvate (D1) ---------- */
 
 async function listFirms(env, url) {
@@ -405,9 +542,20 @@ async function createFirm(env, request) {
       ? body.industrie
       : classifyIndustry(body.tip, body.nume);
 
+  const id = String(body.osm_id || '');
+  const sursa = !id
+    ? 'manual'
+    : id.startsWith('google/')
+      ? 'google'
+      : id.startsWith('ai/')
+        ? 'ai'
+        : id.startsWith('cui/')
+          ? 'registru'
+          : 'openstreetmap';
+
   const result = await env.DB.prepare(
-    `INSERT INTO firme (nume, oras, adresa, telefon, email, website, sursa, osm_id, notite, industrie)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO firme (nume, oras, adresa, telefon, email, website, sursa, osm_id, notite, industrie, cui)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       String(body.nume).trim(),
@@ -416,16 +564,11 @@ async function createFirm(env, request) {
       body.telefon || null,
       body.email || null,
       body.website || null,
-      body.osm_id
-        ? String(body.osm_id).startsWith('google/')
-          ? 'google'
-          : String(body.osm_id).startsWith('ai/')
-            ? 'ai'
-            : 'openstreetmap'
-        : 'manual',
+      sursa,
       body.osm_id || null,
       body.notite || null,
-      industrie
+      industrie,
+      body.cui ? String(body.cui).replace(/\D/g, '') || null : null
     )
     .run();
 
@@ -445,7 +588,7 @@ async function updateFirm(env, request, id) {
   if (!existing) return json({ error: 'Firma nu există' }, 404);
 
   await env.DB.prepare(
-    `UPDATE firme SET nume = ?, oras = ?, adresa = ?, telefon = ?, email = ?, website = ?, status = ?, notite = ?, industrie = ?
+    `UPDATE firme SET nume = ?, oras = ?, adresa = ?, telefon = ?, email = ?, website = ?, status = ?, notite = ?, industrie = ?, cui = ?
      WHERE id = ?`
   )
     .bind(
@@ -458,6 +601,7 @@ async function updateFirm(env, request, id) {
       body.status ?? existing.status,
       body.notite ?? existing.notite,
       body.industrie ?? existing.industrie,
+      body.cui ?? existing.cui,
       id
     )
     .run();

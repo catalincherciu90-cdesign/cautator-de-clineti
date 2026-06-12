@@ -14,6 +14,7 @@
 
   <nav class="tabs">
     <button class="tab active" data-tab="cautare">🔍 Căutare</button>
+    <button class="tab" data-tab="registru">📊 Registru firme</button>
     <button class="tab" data-tab="salvate">💾 Firme salvate <span id="count-badge" class="badge">0</span></button>
     <button class="tab" data-tab="adauga">➕ Adaugă manual</button>
   </nav>
@@ -31,6 +32,39 @@
       </form>
       <div id="search-status" class="status"></div>
       <div id="search-results" class="cards"></div>
+    </section>
+
+    <!-- Tab Registru firme -->
+    <section id="tab-registru" class="tab-content">
+      <p class="hint">Toate firmele de construcții din România, din datele oficiale ale Ministerului Finanțelor
+        (bilanțuri anuale): denumire, CUI, localitate, cifră de afaceri, profit și angajați.</p>
+      <form id="reg-form" class="search-form">
+        <select id="reg-judet"><option value="">Toate județele</option></select>
+        <input type="text" id="reg-localitate" placeholder="Localitate (ex: Iași)">
+        <select id="reg-caen">
+          <option value="">Toate domeniile (CAEN 41–43)</option>
+          <option value="41">Construcția clădirilor (41)</option>
+          <option value="42">Infrastructură & geniu civil (42)</option>
+          <option value="431">Demolări & terasamente (431)</option>
+          <option value="4321">Instalații electrice (4321)</option>
+          <option value="4322">Instalații sanitare & termice (4322)</option>
+          <option value="4331">Ipsoserie & tencuieli (4331)</option>
+          <option value="4332">Tâmplărie & dulgherie (4332)</option>
+          <option value="4333">Pardoseli & placări (4333)</option>
+          <option value="4334">Zugrăveli & vopsitorii (4334)</option>
+          <option value="4391">Acoperișuri & șarpante (4391)</option>
+          <option value="4399">Alte lucrări speciale (4399)</option>
+        </select>
+        <input type="number" id="reg-min-ang" placeholder="Min. angajați" min="0" style="max-width:130px">
+        <input type="number" id="reg-min-ca" placeholder="Min. cifră afaceri (lei)" min="0" style="max-width:180px">
+        <input type="text" id="reg-q" placeholder="Nume firmă (opțional)">
+        <button type="submit" id="reg-btn">Caută în registru</button>
+      </form>
+      <div id="reg-status" class="status"></div>
+      <div id="reg-list" class="cards"></div>
+      <div style="text-align:center;margin-top:1rem">
+        <button id="reg-more" class="btn" style="display:none">Încarcă mai multe</button>
+      </div>
     </section>
 
     <!-- Tab Firme salvate -->
@@ -61,6 +95,7 @@
         <select id="add-industrie">
           <option value="">Industrie (opțional, se detectează automat)</option>
         </select>
+        <input type="text" id="add-cui" placeholder="CUI (pentru verificare ANAF)">
         <input type="text" id="add-oras" placeholder="Oraș">
         <input type="text" id="add-adresa" placeholder="Adresă">
         <input type="tel" id="add-telefon" placeholder="Telefon">
