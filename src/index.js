@@ -108,25 +108,27 @@ async function handleSearch(url, env) {
   const query = (url.searchParams.get('q') || '').trim().toLowerCase();
   if (!city) return json({ error: 'Parametrul "city" este obligatoriu' }, 400);
 
-  // Căutăm în paralel în ambele surse
-  const [googleRes, osmRes] = await Promise.allSettled([
+  // Căutăm în paralel în toate sursele
+  const [googleRes, osmRes, aiRes] = await Promise.allSettled([
     env.GOOGLE_PLACES_API_KEY
       ? searchGoogle(city, query, env.GOOGLE_PLACES_API_KEY)
       : Promise.resolve([]),
     searchOsm(city, query),
+    env.AI ? searchAi(city, query, env) : Promise.resolve([]),
   ]);
 
   const google = googleRes.status === 'fulfilled' ? googleRes.value : [];
   const osm = osmRes.status === 'fulfilled' && osmRes.value ? osmRes.value : null;
+  const ai = aiRes.status === 'fulfilled' ? aiRes.value : [];
 
-  if (!google.length && !osm) {
+  if (!google.length && !osm && !ai.length) {
     return json({ error: 'Serviciile de căutare nu au răspuns. Reîncearcă în câteva secunde.' }, 502);
   }
 
-  // Combinăm: Google primul (date mai bogate), apoi OSM, fără duplicate după nume
+  // Combinăm: Google primul (date mai bogate), apoi OSM, apoi AI (de verificat), fără duplicate după nume
   const seen = new Set();
   let results = [];
-  for (const r of [...google, ...(osm ? osm.results : [])]) {
+  for (const r of [...google, ...(osm ? osm.results : []), ...ai]) {
     const key = r.nume.toLowerCase().replace(/\s+/g, ' ');
     if (seen.has(key)) continue;
     seen.add(key);
@@ -142,10 +144,64 @@ async function handleSearch(url, env) {
 
   return json({
     oras: (osm && osm.display_name) || city,
-    surse: { google: google.length, openstreetmap: osm ? osm.results.length : 0 },
+    surse: { google: google.length, openstreetmap: osm ? osm.results.length : 0, ai: ai.length },
     total: results.length,
     rezultate: results,
   });
+}
+
+/** Căutare cu Cloudflare Workers AI: modelul listează firme cunoscute din oraș.
+ *  AI-ul nu navighează pe internet, deci datele sunt marcate „de verificat"
+ *  și nu îi cerem telefoane/email-uri (risc mare de date inventate). */
+async function searchAi(city, query, env) {
+  const prompt = `Listează firme de construcții reale și cunoscute din orașul ${city}, România${
+    query ? `, în special legate de: ${query}` : ''
+  }.
+
+Reguli stricte:
+- Include DOAR firme de a căror existență ești sigur. Mai bine puține și reale decât multe și inventate.
+- NU inventa numere de telefon, adrese exacte sau email-uri. Lasă-le necompletate.
+- Website doar dacă îl cunoști cu certitudine, altfel null.
+- Maxim 15 firme.
+
+Răspunde DOAR cu un array JSON valid, fără alt text, în formatul:
+[{"nume":"...","tip":"construcții generale / instalații / acoperișuri etc.","website":null}]`;
+
+  const result = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
+    messages: [
+      { role: 'system', content: 'Ești un asistent care răspunde exclusiv cu JSON valid.' },
+      { role: 'user', content: prompt },
+    ],
+    max_tokens: 1500,
+  });
+
+  const text = (result && result.response) || '';
+  const start = text.indexOf('[');
+  const end = text.lastIndexOf(']');
+  if (start === -1 || end <= start) return [];
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed
+    .filter((f) => f && typeof f.nume === 'string' && f.nume.trim())
+    .slice(0, 15)
+    .map((f) => ({
+      osm_id: 'ai/' + f.nume.trim().toLowerCase().replace(/[^a-z0-9ăâîșşțţ]+/gi, '-'),
+      nume: f.nume.trim(),
+      tip: typeof f.tip === 'string' ? f.tip : 'construcții',
+      adresa: null,
+      telefon: null,
+      email: null,
+      website: typeof f.website === 'string' && f.website.startsWith('http') ? f.website : null,
+      oras: city,
+      ai: true,
+    }));
 }
 
 /** Căutare prin Google Places API (Text Search, max 60 de rezultate). */
@@ -344,7 +400,13 @@ async function createFirm(env, request) {
       body.telefon || null,
       body.email || null,
       body.website || null,
-      body.osm_id ? (String(body.osm_id).startsWith('google/') ? 'google' : 'openstreetmap') : 'manual',
+      body.osm_id
+        ? String(body.osm_id).startsWith('google/')
+          ? 'google'
+          : String(body.osm_id).startsWith('ai/')
+            ? 'ai'
+            : 'openstreetmap'
+        : 'manual',
       body.osm_id || null,
       body.notite || null,
       industrie

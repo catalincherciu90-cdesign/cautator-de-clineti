@@ -122,6 +122,16 @@ button:disabled { opacity: .6; cursor: wait; }
   font-size: .8rem;
   width: fit-content;
 }
+.card .ai-badge {
+  display: inline-block;
+  background: #f3f0ff;
+  color: #6741d9;
+  border: 1px dashed #b197fc;
+  border-radius: 6px;
+  padding: .1rem .5rem;
+  font-size: .78rem;
+  width: fit-content;
+}
 .card .detail { font-size: .88rem; color: var(--muted); word-break: break-word; }
 .card .detail a { color: var(--primary-dark); }
 .card .actions { margin-top: auto; padding-top: .6rem; display: flex; gap: .5rem; flex-wrap: wrap; }

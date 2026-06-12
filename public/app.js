@@ -83,8 +83,12 @@ $('#search-form').addEventListener('submit', async (e) => {
       return;
     }
     let info = data.total + ' firme găsite în ' + data.oras;
-    if (data.surse && data.surse.google) {
-      info += ' · Google: ' + data.surse.google + ', OpenStreetMap: ' + data.surse.openstreetmap;
+    if (data.surse) {
+      const parts = [];
+      if (data.surse.google) parts.push('Google: ' + data.surse.google);
+      if (data.surse.openstreetmap) parts.push('OpenStreetMap: ' + data.surse.openstreetmap);
+      if (data.surse.ai) parts.push('AI: ' + data.surse.ai);
+      if (parts.length) info += ' · ' + parts.join(', ');
     }
     setStatus(statusEl, info, 'success');
     resultsEl.innerHTML = data.rezultate.map(renderSearchCard).join('');
@@ -101,6 +105,7 @@ function renderSearchCard(r) {
   <div class="card">
     <h3>${esc(r.nume)}</h3>
     ${r.industrie ? `<span class="tip">${esc(r.industrie)}</span>` : ''}
+    ${r.ai ? `<span class="ai-badge">🤖 Sugestie AI — verifică datele</span>` : ''}
     ${r.rating ? `<div class="detail">⭐ ${esc(r.rating)}${r.recenzii ? ' (' + esc(r.recenzii) + ' recenzii)' : ''}</div>` : ''}
     ${r.adresa ? `<div class="detail">📍 ${esc(r.adresa)}</div>` : ''}
     ${r.telefon ? `<div class="detail">📞 <a href="tel:${esc(r.telefon)}">${esc(r.telefon)}</a></div>` : ''}
