@@ -43,6 +43,18 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: npx wrangler deploy
 
+      - name: Setează cheia Google Places în Cloudflare (dacă există)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+        run: |
+          if [ -n "$GOOGLE_PLACES_API_KEY" ]; then
+            printf '%s' "$GOOGLE_PLACES_API_KEY" | npx wrangler secret put GOOGLE_PLACES_API_KEY
+            echo "Cheia Google Places a fost setată."
+          else
+            echo "GOOGLE_PLACES_API_KEY nu e definit în GitHub Secrets — aplicația folosește doar OpenStreetMap."
+          fi
+
       - name: Test căutare în producție
         continue-on-error: true
         run: |

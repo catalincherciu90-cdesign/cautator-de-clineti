@@ -60,7 +60,11 @@ $('#search-form').addEventListener('submit', async (e) => {
       setStatus(statusEl, 'Nu am găsit firme în zona căutată. Încearcă alt oraș sau fără filtru.');
       return;
     }
-    setStatus(statusEl, data.total + ' firme găsite în ' + data.oras, 'success');
+    let info = data.total + ' firme găsite în ' + data.oras;
+    if (data.surse && data.surse.google) {
+      info += ' · Google: ' + data.surse.google + ', OpenStreetMap: ' + data.surse.openstreetmap;
+    }
+    setStatus(statusEl, info, 'success');
     resultsEl.innerHTML = data.rezultate.map(renderSearchCard).join('');
   } catch (err) {
     setStatus(statusEl, err.message, 'error');
@@ -75,6 +79,7 @@ function renderSearchCard(r) {
   <div class="card">
     <h3>${esc(r.nume)}</h3>
     ${r.tip ? `<span class="tip">${esc(r.tip)}</span>` : ''}
+    ${r.rating ? `<div class="detail">⭐ ${esc(r.rating)}${r.recenzii ? ' (' + esc(r.recenzii) + ' recenzii)' : ''}</div>` : ''}
     ${r.adresa ? `<div class="detail">📍 ${esc(r.adresa)}</div>` : ''}
     ${r.telefon ? `<div class="detail">📞 <a href="tel:${esc(r.telefon)}">${esc(r.telefon)}</a></div>` : ''}
     ${r.email ? `<div class="detail">✉️ <a href="mailto:${esc(r.email)}">${esc(r.email)}</a></div>` : ''}

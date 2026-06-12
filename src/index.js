@@ -26,7 +26,7 @@ export default {
 
     try {
       if (pathname === '/api/search' && request.method === 'GET') {
-        return await handleSearch(url);
+        return await handleSearch(url, env);
       }
       if (pathname === '/api/firms' && request.method === 'GET') {
         return await listFirms(env, url);
@@ -57,16 +57,93 @@ function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
 }
 
-/* ---------- Căutare în OpenStreetMap ---------- */
+/* ---------- Căutare: Google Places + OpenStreetMap ---------- */
 
-async function handleSearch(url) {
+async function handleSearch(url, env) {
   const city = (url.searchParams.get('city') || '').trim();
   const query = (url.searchParams.get('q') || '').trim().toLowerCase();
   if (!city) return json({ error: 'Parametrul "city" este obligatoriu' }, 400);
 
-  // 1. Geocodăm orașul (Nominatim, cu Photon ca rezervă)
+  // Căutăm în paralel în ambele surse
+  const [googleRes, osmRes] = await Promise.allSettled([
+    env.GOOGLE_PLACES_API_KEY
+      ? searchGoogle(city, query, env.GOOGLE_PLACES_API_KEY)
+      : Promise.resolve([]),
+    searchOsm(city, query),
+  ]);
+
+  const google = googleRes.status === 'fulfilled' ? googleRes.value : [];
+  const osm = osmRes.status === 'fulfilled' && osmRes.value ? osmRes.value : null;
+
+  if (!google.length && !osm) {
+    return json({ error: 'Serviciile de căutare nu au răspuns. Reîncearcă în câteva secunde.' }, 502);
+  }
+
+  // Combinăm: Google primul (date mai bogate), apoi OSM, fără duplicate după nume
+  const seen = new Set();
+  const results = [];
+  for (const r of [...google, ...(osm ? osm.results : [])]) {
+    const key = r.nume.toLowerCase().replace(/\s+/g, ' ');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    results.push(r);
+  }
+
+  return json({
+    oras: (osm && osm.display_name) || city,
+    surse: { google: google.length, openstreetmap: osm ? osm.results.length : 0 },
+    total: results.length,
+    rezultate: results,
+  });
+}
+
+/** Căutare prin Google Places API (Text Search, max 60 de rezultate). */
+async function searchGoogle(city, query, apiKey) {
+  const textQuery = (query ? query + ' ' : '') + 'firme de construcții în ' + city + ', România';
+  const results = [];
+  let pageToken = null;
+
+  for (let page = 0; page < 3; page++) {
+    const body = { textQuery, languageCode: 'ro', regionCode: 'RO', pageSize: 20 };
+    if (pageToken) body.pageToken = pageToken;
+
+    const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask':
+          'nextPageToken,places.id,places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri,places.rating,places.userRatingCount,places.primaryTypeDisplayName',
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) break;
+    const data = await res.json();
+
+    for (const p of data.places || []) {
+      results.push({
+        osm_id: 'google/' + p.id,
+        nume: (p.displayName && p.displayName.text) || 'Fără nume',
+        tip: (p.primaryTypeDisplayName && p.primaryTypeDisplayName.text) || 'construcții',
+        adresa: p.formattedAddress || null,
+        telefon: p.nationalPhoneNumber || null,
+        email: null,
+        website: p.websiteUri || null,
+        oras: city,
+        rating: p.rating || null,
+        recenzii: p.userRatingCount || null,
+      });
+    }
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
+  }
+  return results;
+}
+
+/** Căutare în OpenStreetMap (geocodare + Overpass). Returnează null la eșec. */
+async function searchOsm(city, query) {
   const geo = await geocodeCity(city);
-  if (!geo) return json({ error: `Orașul „${city}" nu a fost găsit. Verifică denumirea.` }, 404);
+  if (!geo) return null;
 
   const bbox = `${geo.south},${geo.west},${geo.north},${geo.east}`;
 
@@ -86,9 +163,7 @@ async function handleSearch(url) {
 out center tags 300;`;
 
   const data = await runOverpass(overpassQuery);
-  if (!data) {
-    return json({ error: 'Serviciul de căutare e momentan aglomerat. Reîncearcă în câteva secunde.' }, 502);
-  }
+  if (!data) return null;
 
   let results = (data.elements || [])
     .filter((el) => el.tags && el.tags.name)
@@ -115,16 +190,7 @@ out center tags 300;`;
     );
   }
 
-  // Eliminăm duplicatele după nume
-  const seen = new Set();
-  results = results.filter((r) => {
-    const key = r.nume.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-
-  return json({ oras: geo.display_name, total: results.length, rezultate: results });
+  return { display_name: geo.display_name, results };
 }
 
 /** Geocodare cu două servicii: Nominatim, apoi Photon ca rezervă. */
@@ -220,7 +286,7 @@ async function createFirm(env, request) {
       body.telefon || null,
       body.email || null,
       body.website || null,
-      body.osm_id ? 'openstreetmap' : 'manual',
+      body.osm_id ? (String(body.osm_id).startsWith('google/') ? 'google' : 'openstreetmap') : 'manual',
       body.osm_id || null,
       body.notite || null
     )

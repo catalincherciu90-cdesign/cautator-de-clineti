@@ -6,8 +6,21 @@ Platformă web pentru căutarea firmelor de construcții din orice oraș (date d
 
 - **Cloudflare Workers** — backend API + servire fișiere statice
 - **Cloudflare D1** — bază de date SQLite serverless
-- **OpenStreetMap** (Nominatim + Overpass API) — sursa datelor de căutare
+- **Google Places API** (opțional, cu cheie API) — sursa principală de căutare
+- **OpenStreetMap** (Nominatim + Overpass API) — sursă de căutare gratuită, mereu activă
 - Frontend: HTML/CSS/JavaScript vanilla, fără build step
+
+## Cheia Google Places (opțional, dar recomandat)
+
+Fără cheie, aplicația caută doar în OpenStreetMap. Cu cheie, primește în plus
+rezultate Google Maps (telefoane, website-uri, rating-uri, recenzii):
+
+1. [Google Cloud Console](https://console.cloud.google.com) → creează un proiect
+2. Activează **Places API (New)** și facturarea (există nivel gratuit lunar)
+3. Creează un **API key** (Credentials → Create credentials → API key)
+4. Adaugă cheia ca secret GitHub: `GOOGLE_PLACES_API_KEY`
+   (Settings → Secrets and variables → Actions)
+5. La următorul deploy, cheia e trimisă automat în Cloudflare ca secret de Worker
 
 ## Funcționalități
 
