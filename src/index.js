@@ -19,6 +19,47 @@ const OVERPASS_SERVERS = [
   'https://overpass.kumi.systems/api/interpreter',
 ];
 
+// Industriile din construcții (după structura CAEN 41 / 42 / 43)
+const INDUSTRII = [
+  'Construcții generale',
+  'Infrastructură & drumuri',
+  'Demolări & terasamente',
+  'Amenajări interioare & finisaje',
+  'Instalații sanitare',
+  'Instalații electrice',
+  'Încălzire & climatizare (HVAC)',
+  'Acoperișuri',
+  'Tâmplărie & ferestre',
+  'Zugrăveli & vopsitorii',
+  'Gresie, faianță & piatră',
+  'Pardoseli & parchet',
+  'Izolații & hidroizolații',
+  'Confecții metalice',
+  'Materiale de construcții',
+  'Altele',
+];
+
+/** Încadrează o firmă într-o industrie pe baza tipului OSM și a numelui. */
+function classifyIndustry(tip, nume) {
+  const both = ((tip || '') + ' ' + (nume || '')).toLowerCase();
+  if (/electrician|electric/.test(both)) return 'Instalații electrice';
+  if (/hvac|climatiz|aer condi|incalzir|încălzir|central[ae] termic/.test(both)) return 'Încălzire & climatizare (HVAC)';
+  if (/plumber|sanitar|instalat/.test(both)) return 'Instalații sanitare';
+  if (/roofer|acoperi/.test(both)) return 'Acoperișuri';
+  if (/window_construction|carpenter|joiner|termopan|tamplar|tâmplăr|geam|fereastr|\busi\b|\buși\b/.test(both)) return 'Tâmplărie & ferestre';
+  if (/painter|plasterer|zugrav|vopsit|rigips|tencui/.test(both)) return 'Zugrăveli & vopsitorii';
+  if (/tiler|stonemason|\bmason\b|gresie|faian|piatr[aă]|marmur/.test(both)) return 'Gresie, faianță & piatră';
+  if (/floorer|flooring|pardosel|parchet/.test(both)) return 'Pardoseli & parchet';
+  if (/insulation|izola|hidroizol/.test(both)) return 'Izolații & hidroizolații';
+  if (/metal_construction|blacksmith|welder|confec.ii metal|fier forjat|inox|sudur/.test(both)) return 'Confecții metalice';
+  if (/doityourself|\btrade\b|materiale de construc|depozit/.test(both)) return 'Materiale de construcții';
+  if (/drum|asfalt|infrastructur|poduri|geniu civil/.test(both)) return 'Infrastructură & drumuri';
+  if (/demol|excava|terasament|s[aă]p[aă]tur|foraj/.test(both)) return 'Demolări & terasamente';
+  if (/amenaj|finisaj|design interior/.test(both)) return 'Amenajări interioare & finisaje';
+  if (/builder|construction|scaffolder|construct|beton|santier|şantier/.test(both)) return 'Construcții generale';
+  return 'Altele';
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -27,6 +68,9 @@ export default {
     try {
       if (pathname === '/api/search' && request.method === 'GET') {
         return await handleSearch(url, env);
+      }
+      if (pathname === '/api/industries' && request.method === 'GET') {
+        return json({ industrii: INDUSTRII });
       }
       if (pathname === '/api/firms' && request.method === 'GET') {
         return await listFirms(env, url);
@@ -81,12 +125,19 @@ async function handleSearch(url, env) {
 
   // Combinăm: Google primul (date mai bogate), apoi OSM, fără duplicate după nume
   const seen = new Set();
-  const results = [];
+  let results = [];
   for (const r of [...google, ...(osm ? osm.results : [])]) {
     const key = r.nume.toLowerCase().replace(/\s+/g, ' ');
     if (seen.has(key)) continue;
     seen.add(key);
+    r.industrie = classifyIndustry(r.tip, r.nume);
     results.push(r);
+  }
+
+  // Filtru opțional pe industrie
+  const industrie = (url.searchParams.get('industrie') || '').trim();
+  if (industrie) {
+    results = results.filter((r) => r.industrie === industrie);
   }
 
   return json({
@@ -252,13 +303,15 @@ async function runOverpass(query) {
 
 async function listFirms(env, url) {
   const status = url.searchParams.get('status');
-  let stmt;
-  if (status) {
-    stmt = env.DB.prepare('SELECT * FROM firme WHERE status = ? ORDER BY creat_la DESC').bind(status);
-  } else {
-    stmt = env.DB.prepare('SELECT * FROM firme ORDER BY creat_la DESC');
-  }
-  const { results } = await stmt.all();
+  const industrie = url.searchParams.get('industrie');
+  const conditions = [];
+  const params = [];
+  if (status) { conditions.push('status = ?'); params.push(status); }
+  if (industrie) { conditions.push('industrie = ?'); params.push(industrie); }
+  const where = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
+  const { results } = await env.DB.prepare('SELECT * FROM firme' + where + ' ORDER BY creat_la DESC')
+    .bind(...params)
+    .all();
   return json({ total: results.length, firme: results });
 }
 
@@ -275,9 +328,14 @@ async function createFirm(env, request) {
     if (existing) return json({ error: 'Firma este deja salvată', id: existing.id }, 409);
   }
 
+  const industrie =
+    body.industrie && INDUSTRII.includes(body.industrie)
+      ? body.industrie
+      : classifyIndustry(body.tip, body.nume);
+
   const result = await env.DB.prepare(
-    `INSERT INTO firme (nume, oras, adresa, telefon, email, website, sursa, osm_id, notite)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO firme (nume, oras, adresa, telefon, email, website, sursa, osm_id, notite, industrie)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       String(body.nume).trim(),
@@ -288,7 +346,8 @@ async function createFirm(env, request) {
       body.website || null,
       body.osm_id ? (String(body.osm_id).startsWith('google/') ? 'google' : 'openstreetmap') : 'manual',
       body.osm_id || null,
-      body.notite || null
+      body.notite || null,
+      industrie
     )
     .run();
 
@@ -308,7 +367,7 @@ async function updateFirm(env, request, id) {
   if (!existing) return json({ error: 'Firma nu există' }, 404);
 
   await env.DB.prepare(
-    `UPDATE firme SET nume = ?, oras = ?, adresa = ?, telefon = ?, email = ?, website = ?, status = ?, notite = ?
+    `UPDATE firme SET nume = ?, oras = ?, adresa = ?, telefon = ?, email = ?, website = ?, status = ?, notite = ?, industrie = ?
      WHERE id = ?`
   )
     .bind(
@@ -320,6 +379,7 @@ async function updateFirm(env, request, id) {
       body.website ?? existing.website,
       body.status ?? existing.status,
       body.notite ?? existing.notite,
+      body.industrie ?? existing.industrie,
       id
     )
     .run();

@@ -12,6 +12,25 @@ const STATUS_LABELS = {
 
 let savedOsmIds = new Set();
 
+/* ---------- Industrii (filtre) ---------- */
+
+async function loadIndustries() {
+  try {
+    const res = await fetch('/api/industries');
+    const data = await res.json();
+    if (!res.ok) return;
+    for (const selId of ['search-industry', 'filter-industry', 'add-industrie']) {
+      const sel = document.getElementById(selId);
+      for (const ind of data.industrii) {
+        const opt = document.createElement('option');
+        opt.value = ind;
+        opt.textContent = ind;
+        sel.appendChild(opt);
+      }
+    }
+  } catch { /* fără filtre dacă apare o eroare */ }
+}
+
 /* ---------- Tab-uri ---------- */
 
 document.querySelectorAll('.tab').forEach((btn) => {
@@ -41,6 +60,7 @@ $('#search-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const city = $('#search-city').value.trim();
   const q = $('#search-query').value.trim();
+  const industrie = $('#search-industry').value;
   const btn = $('#search-btn');
   const statusEl = $('#search-status');
   const resultsEl = $('#search-results');
@@ -51,7 +71,9 @@ $('#search-form').addEventListener('submit', async (e) => {
 
   try {
     const res = await fetch(
-      '/api/search?city=' + encodeURIComponent(city) + (q ? '&q=' + encodeURIComponent(q) : '')
+      '/api/search?city=' + encodeURIComponent(city) +
+        (q ? '&q=' + encodeURIComponent(q) : '') +
+        (industrie ? '&industrie=' + encodeURIComponent(industrie) : '')
     );
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Eroare la căutare');
@@ -78,7 +100,7 @@ function renderSearchCard(r) {
   return `
   <div class="card">
     <h3>${esc(r.nume)}</h3>
-    ${r.tip ? `<span class="tip">${esc(r.tip)}</span>` : ''}
+    ${r.industrie ? `<span class="tip">${esc(r.industrie)}</span>` : ''}
     ${r.rating ? `<div class="detail">⭐ ${esc(r.rating)}${r.recenzii ? ' (' + esc(r.recenzii) + ' recenzii)' : ''}</div>` : ''}
     ${r.adresa ? `<div class="detail">📍 ${esc(r.adresa)}</div>` : ''}
     ${r.telefon ? `<div class="detail">📞 <a href="tel:${esc(r.telefon)}">${esc(r.telefon)}</a></div>` : ''}
@@ -119,23 +141,30 @@ async function saveFromSearch(btn, firm) {
 /* ---------- Firme salvate ---------- */
 
 $('#filter-status').addEventListener('change', loadSaved);
+$('#filter-industry').addEventListener('change', loadSaved);
 
 async function loadSaved() {
   const listEl = $('#saved-list');
   const statusEl = $('#saved-status');
   const filter = $('#filter-status').value;
+  const filterInd = $('#filter-industry').value;
   setStatus(statusEl, 'Se încarcă…');
 
   try {
-    const res = await fetch('/api/firms' + (filter ? '?status=' + filter : ''));
+    const params = new URLSearchParams();
+    if (filter) params.set('status', filter);
+    if (filterInd) params.set('industrie', filterInd);
+    const qs = params.toString();
+    const res = await fetch('/api/firms' + (qs ? '?' + qs : ''));
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Eroare la încărcare');
 
     savedOsmIds = new Set(data.firme.filter((f) => f.osm_id).map((f) => f.osm_id));
-    $('#count-badge').textContent = filter ? data.total + '*' : data.total;
+    const filtered = filter || filterInd;
+    $('#count-badge').textContent = filtered ? data.total + '*' : data.total;
 
     if (!data.firme.length) {
-      setStatus(statusEl, 'Nicio firmă salvată' + (filter ? ' cu acest status.' : ' încă. Caută și salvează firme din tab-ul Căutare.'));
+      setStatus(statusEl, 'Nicio firmă salvată' + (filtered ? ' cu aceste filtre.' : ' încă. Caută și salvează firme din tab-ul Căutare.'));
       listEl.innerHTML = '';
       return;
     }
@@ -154,6 +183,7 @@ function renderSavedCard(f) {
   <div class="card" data-id="${f.id}">
     <h3>${esc(f.nume)}</h3>
     <span class="status-pill status-${esc(f.status)}">${STATUS_LABELS[f.status] || esc(f.status)}</span>
+    ${f.industrie ? `<span class="tip">${esc(f.industrie)}</span>` : ''}
     ${f.oras ? `<div class="detail">🏙️ ${esc(f.oras)}</div>` : ''}
     ${f.adresa ? `<div class="detail">📍 ${esc(f.adresa)}</div>` : ''}
     ${f.telefon ? `<div class="detail">📞 <a href="tel:${esc(f.telefon)}">${esc(f.telefon)}</a></div>` : ''}
@@ -202,6 +232,7 @@ $('#add-form').addEventListener('submit', async (e) => {
   const statusEl = $('#add-status');
   const body = {
     nume: $('#add-nume').value.trim(),
+    industrie: $('#add-industrie').value || null,
     oras: $('#add-oras').value.trim() || null,
     adresa: $('#add-adresa').value.trim() || null,
     telefon: $('#add-telefon').value.trim() || null,
@@ -235,4 +266,5 @@ async function refreshCount() {
   } catch { /* ignorăm */ }
 }
 
+loadIndustries();
 refreshCount();

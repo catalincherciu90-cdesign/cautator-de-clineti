@@ -23,7 +23,10 @@
     <section id="tab-cautare" class="tab-content active">
       <form id="search-form" class="search-form">
         <input type="text" id="search-city" placeholder="Oraș (ex: București, Cluj-Napoca, Iași)" required>
-        <input type="text" id="search-query" placeholder="Filtru opțional (ex: instalator, acoperiș)">
+        <select id="search-industry">
+          <option value="">Toate industriile</option>
+        </select>
+        <input type="text" id="search-query" placeholder="Filtru opțional (ex: nume firmă)">
         <button type="submit" id="search-btn">Caută</button>
       </form>
       <div id="search-status" class="status"></div>
@@ -33,7 +36,7 @@
     <!-- Tab Firme salvate -->
     <section id="tab-salvate" class="tab-content">
       <div class="filter-bar">
-        <label>Filtrează după status:</label>
+        <label>Status:</label>
         <select id="filter-status">
           <option value="">Toate</option>
           <option value="nou">Nou</option>
@@ -41,6 +44,10 @@
           <option value="oferta_trimisa">Ofertă trimisă</option>
           <option value="client">Client</option>
           <option value="respins">Respins</option>
+        </select>
+        <label>Industrie:</label>
+        <select id="filter-industry">
+          <option value="">Toate</option>
         </select>
       </div>
       <div id="saved-status" class="status"></div>
@@ -51,6 +58,9 @@
     <section id="tab-adauga" class="tab-content">
       <form id="add-form" class="add-form">
         <input type="text" id="add-nume" placeholder="Numele firmei *" required>
+        <select id="add-industrie">
+          <option value="">Industrie (opțional, se detectează automat)</option>
+        </select>
         <input type="text" id="add-oras" placeholder="Oraș">
         <input type="text" id="add-adresa" placeholder="Adresă">
         <input type="tel" id="add-telefon" placeholder="Telefon">

@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS firme (
   osm_id TEXT,
   status TEXT DEFAULT 'nou',
   notite TEXT,
+  industrie TEXT,
   creat_la TEXT DEFAULT (datetime('now'))
 );
 
